@@ -3,7 +3,7 @@ apply plugin: 'kotlin-android'
 
 android {
     namespace 'com.nianan.app'
-    compileSdk 33  // 降级避免AGP兼容问题
+    compileSdk 33
     defaultConfig {
         applicationId "com.nianan.app"
         minSdk 26
