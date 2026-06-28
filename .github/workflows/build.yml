@@ -5,7 +5,6 @@ on:
     branches: [master]
   workflow_dispatch:
 
-# 同一分支有新的push时取消旧的构建
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -25,31 +24,9 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        run: |
-          ANDROID_HOME=$HOME/android-sdk
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-
-          if [ -d "$ANDROID_HOME/platforms/android-33" ]; then
-            echo "SDK cached, skip download"
-          else
-            mkdir -p $ANDROID_HOME/cmdline-tools
-            cd $ANDROID_HOME/cmdline-tools
-            wget -q --timeout=120 \
-              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q commandlinetools-linux-11076708_latest.zip
-            mkdir -p latest
-            shopt -s dotglob
-            for f in *; do
-              [ "$f" != "latest" ] && [ "$f" != "commandlinetools-linux-11076708_latest.zip" ] && mv "$f" latest/
-            done
-            shopt -u dotglob
-            yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses > /dev/null 2>&1
-            $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME \
-              "platforms;android-33" "build-tools;33.0.0"
-          fi
-
-          # 在项目根目录写 local.properties
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-33 build-tools;33.0.0'
 
       - name: Setup Gradle 8.5
         run: |
