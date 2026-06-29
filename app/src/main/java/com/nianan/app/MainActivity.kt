@@ -81,10 +81,14 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun startCall() {
             runOnUiThread {
-                val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
-                    action = VoiceCallService.ACTION_START_CALL
+                try {
+                    val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
+                        action = VoiceCallService.ACTION_START_CALL
+                    }
+                    startForegroundService(intent)
+                } catch (e: Exception) {
+                    java.io.File("/storage/emulated/0/nianan_crash.txt").writeText("startCall crash: ${e.message}")
                 }
-                startForegroundService(intent)
             }
         }
 
