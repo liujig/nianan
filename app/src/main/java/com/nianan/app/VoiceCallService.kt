@@ -19,7 +19,7 @@ class VoiceCallService : Service() {
     }
 
     private var audioRecord: AudioRecord? = null
-    private var audioTrack: AudioTrack? = null
+    private var mediaPlayer: MediaPlayer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var scoStarted = false
     private var recording = false
@@ -41,7 +41,6 @@ class VoiceCallService : Service() {
         showNotification()
         startBluetoothSco()
         acquireWakeLock()
-        startPlayback()
         startRecording()
         return START_NOT_STICKY
     }
@@ -49,7 +48,7 @@ class VoiceCallService : Service() {
     override fun onDestroy() {
         recording = false
         stopRecording()
-        stopPlayback()
+        stopMediaPlayer()
         stopBluetoothSco()
         wakeLock?.release()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -80,7 +79,7 @@ class VoiceCallService : Service() {
         recording = true
         audioRecord?.startRecording()
 
-        val chunkSize = SAMPLE_RATE * 2 * CHUNK_SECS  // 96000 bytes
+        val chunkSize = SAMPLE_RATE * 2 * CHUNK_SECS
         val chunk = ByteArray(chunkSize)
         var pos = 0
 
@@ -137,8 +136,8 @@ class VoiceCallService : Service() {
             var n: Int
             while (inp.read(buf).also { n = it } != -1) out.write(buf, 0, n)
             inp.close()
-            val audio = out.toByteArray()
             conn.disconnect()
+            val audio = out.toByteArray()
             return if (audio.size > 44) audio else null
         }
         conn.disconnect()
@@ -150,46 +149,28 @@ class VoiceCallService : Service() {
         audioRecord = null
     }
 
-    // ─── 播放 ───
-    private fun startPlayback() {
-        val bs = AudioTrack.getMinBufferSize(24000,
-            AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        audioTrack = AudioTrack(
-            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build(),
-            AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build(),
-            bs, AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE)
-        audioTrack?.play()
-    }
-
+    // ─── MediaPlayer 播放 ───
     private fun playAudio(wav: ByteArray) {
         try {
-            // 跳过WAV头: 标准44字节，但TTS输出可能不同
-            var offset = 0
-            if (wav.size > 12 && String(wav, 0, 4) == "RIFF" && String(wav, 8, 4) == "WAVE") {
-                offset = 44  // 默认跳过标准WAV头
-                // 可能有额外的chunk在data之前
-                while (offset + 8 < wav.size) {
-                    val chunkId = String(wav, offset, 4)
-                    val chunkSize = java.nio.ByteBuffer.wrap(wav, offset + 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt()
-                    if (chunkId == "data") {
-                        offset += 8
-                        break
-                    }
-                    offset += 8 + chunkSize
-                }
-            }
-            if (offset < wav.size) {
-                val pcm = wav.copyOfRange(offset, wav.size)
-                audioTrack?.write(pcm, 0, pcm.size)
+            stopMediaPlayer()
+            val file = File(filesDir, "reply.wav")
+            file.writeBytes(wav)
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build())
+                setOnPreparedListener { start() }
+                setOnCompletionListener { mp -> mp.release(); mediaPlayer = null }
+                prepareAsync()
             }
         } catch (_: Exception) {}
     }
 
-    private fun stopPlayback() {
-        audioTrack?.apply { stop(); release() }
-        audioTrack = null
+    private fun stopMediaPlayer() {
+        try { mediaPlayer?.apply { stop(); release() } } catch (_: Exception) {}
+        mediaPlayer = null
     }
 
     // ─── 蓝牙 ───
