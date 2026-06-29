@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.provider.MediaStore
 import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
@@ -82,12 +83,14 @@ class MainActivity : AppCompatActivity() {
         fun startCall() {
             runOnUiThread {
                 try {
-                    val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
-                        action = VoiceCallService.ACTION_START_CALL
+                    val intent = Intent(this@MainActivity, VoiceCallService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent)
+                    } else {
+                        startService(intent)
                     }
-                    startService(intent)  // 测试：先用startService代替startForegroundService
                 } catch (e: Exception) {
-                    java.io.File("/storage/emulated/0/nianan_crash.txt").writeText("startCall crash: ${e.message}")
+                    android.util.Log.e("nianan", "startCall failed", e)
                 }
             }
         }
@@ -95,10 +98,11 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun endCall() {
             runOnUiThread {
-                val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
-                    action = VoiceCallService.ACTION_STOP_CALL
+                try {
+                    stopService(Intent(this@MainActivity, VoiceCallService::class.java))
+                } catch (e: Exception) {
+                    android.util.Log.e("nianan", "endCall failed", e)
                 }
-                startService(intent)
             }
         }
 
