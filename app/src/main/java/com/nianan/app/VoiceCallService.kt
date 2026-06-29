@@ -4,29 +4,26 @@ import android.app.*
 import android.content.Intent
 import android.media.*
 import android.os.*
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
-import org.json.JSONObject
 
 class VoiceCallService : Service() {
 
     companion object {
-        const val TAG = "NianAnVoice"
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "nc"
-        const val VOICE_URL = "http://127.0.0.1:8765/voice"
+        const val VOICE_URL = "http://127.0.0.1:8765/voice_audio"
+        const val SAMPLE_RATE = 16000
+        const val CHUNK_SECS = 3
     }
 
-    private var speechRecognizer: SpeechRecognizer? = null
+    private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var scoStarted = false
+    private var recording = false
     private var handler: Handler? = null
-    private var listening = false
 
     override fun onCreate() {
         super.onCreate()
@@ -45,13 +42,13 @@ class VoiceCallService : Service() {
         startBluetoothSco()
         acquireWakeLock()
         startPlayback()
-        startSpeechRecognition()
+        startRecording()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        listening = false
-        stopSpeechRecognition()
+        recording = false
+        stopRecording()
         stopPlayback()
         stopBluetoothSco()
         wakeLock?.release()
@@ -59,118 +56,110 @@ class VoiceCallService : Service() {
         super.onDestroy()
     }
 
-    // ─── 通知 ───
     private fun showNotification() {
         val pi = PendingIntent.getActivity(this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        startForeground(NOTIFICATION_ID,
-            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID)
-            else @Suppress("DEPRECATION") Notification.Builder(this))
-                .setContentTitle("通话中 — 念安")
-                .setContentText("蓝牙耳机实时对话")
-                .setSmallIcon(android.R.drawable.ic_menu_call)
-                .setOngoing(true).setContentIntent(pi).build())
+        val nb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            Notification.Builder(this, CHANNEL_ID)
+        else @Suppress("DEPRECATION") Notification.Builder(this)
+        startForeground(NOTIFICATION_ID, nb
+            .setContentTitle("通话中 — 念安")
+            .setContentText("蓝牙耳机实时对话")
+            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setOngoing(true).setContentIntent(pi).build())
     }
 
-    // ─── 语音识别 ───
-    private fun startSpeechRecognition() {
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buf: ByteArray?) {}
-            override fun onEndOfSpeech() { listening = false }
+    // ─── 录音+发送 ───
+    private fun startRecording() {
+        val bufSize = AudioRecord.getMinBufferSize(SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        audioRecord = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT, bufSize * 2)
+        recording = true
+        audioRecord?.startRecording()
 
-            override fun onError(error: Int) {
-                if (listening || error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                    handler?.postDelayed({ restartRecognition() }, 300)
+        val chunkSize = SAMPLE_RATE * 2 * CHUNK_SECS  // 96000 bytes
+        val chunk = ByteArray(chunkSize)
+        var pos = 0
+
+        Thread {
+            while (recording) {
+                val len = audioRecord?.read(chunk, pos, chunkSize - pos) ?: break
+                if (len < 0) break
+                pos += len
+                if (pos >= chunkSize) {
+                    val data = chunk.copyOf(pos)
+                    pos = 0
+                    try {
+                        val respAudio = sendAudio(data)
+                        if (respAudio != null && respAudio.isNotEmpty()) {
+                            handler?.post { playAudio(respAudio) }
+                        }
+                    } catch (_: Exception) {}
                 }
             }
-
-            override fun onResults(results: Bundle?) {
-                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (matches != null && matches.isNotEmpty()) {
-                    val text = matches[0]
-                    Thread { sendText(text) }.start()
-                }
-                restartRecognition()
-            }
-
-            override fun onPartialResults(partial: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-
-        startListening()
+        }.start()
     }
 
-    private fun startListening() {
-        listening = true
-        speechRecognizer?.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 800)
-        })
-    }
+    private fun sendAudio(pcm: ByteArray): ByteArray? {
+        // PCM转WAV
+        val wav = ByteArrayOutputStream(pcm.size + 44)
+        val le = java.nio.ByteOrder.LITTLE_ENDIAN
+        val b4 = java.nio.ByteBuffer.allocate(4).order(le)
+        wav.write("RIFF".toByteArray())
+        b4.putInt(0, pcm.size + 36); wav.write(b4.array())
+        wav.write("WAVE".toByteArray())
+        wav.write("fmt ".toByteArray())
+        b4.putInt(0, 16); wav.write(b4.array())
+        b4.putShort(0, 1.toShort()); wav.write(b4.array(), 0, 2)
+        b4.putShort(0, 1.toShort()); wav.write(b4.array(), 0, 2)
+        b4.putInt(0, SAMPLE_RATE); wav.write(b4.array())
+        b4.putInt(0, SAMPLE_RATE * 2); wav.write(b4.array())
+        b4.putShort(0, 2.toShort()); wav.write(b4.array(), 0, 2)
+        b4.putShort(0, 16.toShort()); wav.write(b4.array(), 0, 2)
+        wav.write("data".toByteArray())
+        b4.putInt(0, pcm.size); wav.write(b4.array())
+        wav.write(pcm)
 
-    private fun restartRecognition() {
-        if (!listening) {
-            startListening()
-        }
-    }
+        val conn = URL(VOICE_URL).openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"; conn.doOutput = true
+        conn.connectTimeout = 10000; conn.readTimeout = 20000
+        conn.setRequestProperty("Content-Type", "application/octet-stream")
+        conn.outputStream.write(wav.toByteArray())
+        conn.outputStream.flush(); conn.outputStream.close()
 
-    private fun stopSpeechRecognition() {
-        speechRecognizer?.apply { stopListening(); destroy() }
-        speechRecognizer = null
-    }
-
-    // ─── 发送文字 → 收音频 ───
-    private fun sendText(text: String) {
-        try {
-            val json = JSONObject().apply { put("text", text) }
-            val body = json.toString().toByteArray()
-            val conn = URL(VOICE_URL).openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.doOutput = true
-            conn.connectTimeout = 10000
-            conn.readTimeout = 15000
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.outputStream.write(body)
-            conn.outputStream.flush()
-            conn.outputStream.close()
-
-            if (conn.responseCode == 200) {
-                val input = conn.inputStream
-                val out = ByteArrayOutputStream()
-                val buf = ByteArray(4096)
-                var n: Int
-                while (input.read(buf).also { n = it } != -1) { out.write(buf, 0, n) }
-                input.close()
-                val audio = out.toByteArray()
-                if (audio.size > 44) {
-                    handler?.post { playAudio(audio) }
-                }
-            }
+        if (conn.responseCode == 200) {
+            val inp = conn.inputStream
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            var n: Int
+            while (inp.read(buf).also { n = it } != -1) out.write(buf, 0, n)
+            inp.close()
+            val audio = out.toByteArray()
             conn.disconnect()
-        } catch (e: Exception) {}
+            return if (audio.size > 44) audio else null
+        }
+        conn.disconnect()
+        return null
+    }
+
+    private fun stopRecording() {
+        audioRecord?.apply { stop(); release() }
+        audioRecord = null
     }
 
     // ─── 播放 ───
     private fun startPlayback() {
-        val bufSize = AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val bs = AudioTrack.getMinBufferSize(24000,
+            AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         audioTrack = AudioTrack(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build(),
-            AudioFormat.Builder()
-                .setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build(),
+            AudioFormat.Builder().setSampleRate(24000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build(),
-            bufSize, AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE
-        )
+            bs, AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE)
         audioTrack?.play()
     }
 
@@ -192,16 +181,14 @@ class VoiceCallService : Service() {
                 am.mode = AudioManager.MODE_IN_COMMUNICATION
                 am.isSpeakerphoneOn = false; am.startBluetoothSco(); scoStarted = true
             }
-        } catch (e: Exception) {}
+        } catch (_: Exception) {}
     }
 
     private fun stopBluetoothSco() {
-        if (scoStarted) {
-            try {
-                val am = getSystemService(AUDIO_SERVICE) as AudioManager
-                am.stopBluetoothSco(); am.mode = AudioManager.MODE_NORMAL
-            } catch (e: Exception) {}
-        }
+        if (scoStarted) try {
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            am.stopBluetoothSco(); am.mode = AudioManager.MODE_NORMAL
+        } catch (_: Exception) {}
     }
 
     private fun acquireWakeLock() {
