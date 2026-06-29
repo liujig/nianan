@@ -1,8 +1,6 @@
 package com.nianan.app
 
 import android.app.*
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.media.*
@@ -13,14 +11,10 @@ import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import okhttp3.*
-import java.nio.ByteBuffer
-import java.util.concurrent.TimeUnit
 
 /**
  * 念安语音通话服务 — ForegroundService
- * 管理 AudioRecord(录音) + AudioTrack(播放) + WebSocket(传输)
- * 配合 ConnectionService 实现息屏蓝牙实时对话
+ * WebSocket 连接用独立线程池实现（不依赖 OkHttp，避免编译依赖问题）
  */
 class VoiceCallService : Service() {
 
@@ -30,24 +24,23 @@ class VoiceCallService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START_CALL = "com.nianan.app.START_CALL"
         const val ACTION_STOP_CALL = "com.nianan.app.STOP_CALL"
-
-        // 音频参数
-        const val SAMPLE_RATE_IN = 16000   // 录音采样率 (Paraformer)
-        const val SAMPLE_RATE_OUT = 24000  // 播放采样率 (TTS)
+        const val SAMPLE_RATE_IN = 16000
+        const val SAMPLE_RATE_OUT = 24000
         const val CHANNELS = 1
         const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
-
-        // WebSocket 地址
         const val WS_URL = "ws://127.0.0.1:8765"
     }
 
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
-    private var webSocket: WebSocket? = null
-    private var okHttpClient: OkHttpClient? = null
     private var recording = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var scoStarted = false
+    private var wsConnected = false
+    private var wsThread: Thread? = null
+    private var wsInput: java.io.InputStream? = null
+    private var wsOutput: java.io.OutputStream? = null
+    private var wsSocket: java.net.Socket? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -65,27 +58,20 @@ class VoiceCallService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // ─── 通话控制 ───
-
     private fun startCall() {
         Log.i(TAG, "开始通话")
         showCallNotification()
-
-        // 启动蓝牙 SCO（通话音频通道）
         startBluetoothSco()
 
-        // 获取 WakeLock 防止 CPU 休眠
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "nianan:voicecall"
-        ).apply { acquire(3600_000) } // 最长1小时
+        ).apply { acquire(3600_000) }
 
-        // 连接 WebSocket
         connectWebSocket()
 
-        // 延迟启动录音（等 WebSocket 连上）
-        android.os.Handler(Looper.getMainLooper()).postDelayed({
+        Handler(Looper.getMainLooper()).postDelayed({
             startRecording()
             startPlayback()
         }, 500)
@@ -96,7 +82,7 @@ class VoiceCallService : Service() {
         recording = false
         stopRecording()
         stopPlayback()
-        webSocket?.close(1000, "用户结束通话")
+        disconnectWebSocket()
         stopBluetoothSco()
         wakeLock?.release()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -116,7 +102,7 @@ class VoiceCallService : Service() {
                 Log.i(TAG, "蓝牙 SCO 已启动")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "蓝牙 SCO 启动失败: ${e.message}")
+            Log.w(TAG, "蓝牙 SCO 失败: ${e.message}")
         }
     }
 
@@ -139,10 +125,8 @@ class VoiceCallService : Service() {
         )
         audioRecord = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            SAMPLE_RATE_IN,
-            AudioFormat.CHANNEL_IN_MONO,
-            ENCODING,
-            bufferSize * 2
+            SAMPLE_RATE_IN, AudioFormat.CHANNEL_IN_MONO,
+            ENCODING, bufferSize * 2
         )
         recording = true
         audioRecord?.startRecording()
@@ -151,8 +135,16 @@ class VoiceCallService : Service() {
             val buffer = ByteArray(bufferSize)
             while (recording) {
                 val len = audioRecord?.read(buffer, 0, buffer.size) ?: break
-                if (len > 0) {
-                    webSocket?.send(okio.ByteString.of(buffer.copyOf(len)))
+                if (len > 0 && wsConnected && wsOutput != null) {
+                    try {
+                        // 发送音频帧: 4字节长度头 + 数据
+                        val header = java.nio.ByteBuffer.allocate(4).putInt(len).array()
+                        wsOutput!!.write(header)
+                        wsOutput!!.write(buffer, 0, len)
+                        wsOutput!!.flush()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "发送音频失败: ${e.message}")
+                    }
                 }
             }
         }.start()
@@ -160,12 +152,8 @@ class VoiceCallService : Service() {
     }
 
     private fun stopRecording() {
-        audioRecord?.apply {
-            stop()
-            release()
-        }
+        audioRecord?.apply { stop(); release() }
         audioRecord = null
-        Log.i(TAG, "录音已停止")
     }
 
     // ─── 播放 ───
@@ -184,63 +172,110 @@ class VoiceCallService : Service() {
                 .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                 .setEncoding(ENCODING)
                 .build(),
-            bufferSize,
-            AudioTrack.MODE_STREAM,
+            bufferSize, AudioTrack.MODE_STREAM,
             AudioManager.AUDIO_SESSION_ID_GENERATE
         )
         audioTrack?.play()
-        Log.i(TAG, "播放器已就绪 | buffer=$bufferSize")
+        Log.i(TAG, "播放器已就绪")
     }
 
     private fun stopPlayback() {
-        audioTrack?.apply {
-            stop()
-            release()
-        }
+        audioTrack?.apply { stop(); release() }
         audioTrack = null
     }
 
-    fun playAudio(data: ByteArray) {
-        audioTrack?.write(data, 0, data.size)
-    }
-
-    // ─── WebSocket ───
+    // ─── WebSocket（原生 Java Socket 实现，不依赖 OkHttp） ───
 
     private fun connectWebSocket() {
-        okHttpClient = OkHttpClient.Builder()
-            .readTimeout(0, TimeUnit.MILLISECONDS)
-            .build()
+        wsThread = Thread {
+            try {
+                val uri = java.net.URI.create(WS_URL)
+                val socket = java.net.Socket(uri.host, uri.port)
+                wsSocket = socket
+                wsInput = socket.getInputStream()
+                wsOutput = socket.getOutputStream()
 
-        val request = Request.Builder().url(WS_URL).build()
-        webSocket = okHttpClient!!.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(ws: WebSocket, response: Response) {
-                Log.i(TAG, "WebSocket 已连接")
-                // 发送握手包
-                ws.send("{\"type\":\"hello\",\"role\":\"android_client\"}")
-            }
+                // WebSocket 握手
+                val key = java.util.Base64.getEncoder().encodeToString(
+                    "nianan-voice-${System.currentTimeMillis()}".toByteArray()
+                )
+                val handshake = buildString {
+                    append("GET / HTTP/1.1\r\n")
+                    append("Host: ${uri.host}:${uri.port}\r\n")
+                    append("Upgrade: websocket\r\n")
+                    append("Connection: Upgrade\r\n")
+                    append("Sec-WebSocket-Key: $key\r\n")
+                    append("Sec-WebSocket-Version: 13\r\n")
+                    append("\r\n")
+                }
+                wsOutput!!.write(handshake.toByteArray())
+                wsOutput!!.flush()
 
-            override fun onMessage(ws: WebSocket, text: String) {
-                // JSON 文本消息（状态/文字）
-                Log.d(TAG, "WS text: ${text.take(100)}")
-            }
+                // 读握手响应
+                val reader = java.io.BufferedReader(java.io.InputStreamReader(wsInput))
+                var line: String?
+                do { line = reader.readLine() } while (line != null && line.isNotEmpty())
 
-            override fun onMessage(ws: WebSocket, bytes: okio.ByteString) {
-                // 二进制音频数据 — 直接播放
-                playAudio(bytes.toByteArray())
-            }
+                wsConnected = true
+                Log.i(TAG, "WebSocket 已连接（原生Socket）")
 
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket 断开: ${t.message}")
-                // 3秒后重连
-                android.os.Handler(Looper.getMainLooper()).postDelayed({
-                    if (recording) connectWebSocket()
-                }, 3000)
-            }
+                // 发送 hello
+                sendWsText("{\"type\":\"hello\",\"role\":\"android_client\"}")
 
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                Log.i(TAG, "WebSocket 已关闭: $reason")
+                // 读音频数据
+                val buf = java.io.DataInputStream(wsInput!!)
+                while (wsConnected) {
+                    try {
+                        // 读取帧: opcode(1) + len(4) + data
+                        val opcode = buf.readByte()
+                        if (opcode == 0x02.toByte()) {
+                            // 二进制帧
+                            val len = buf.readInt()
+                            if (len > 0 && len < 102400) {
+                                val audio = ByteArray(len)
+                                buf.readFully(audio)
+                                Handler(Looper.getMainLooper()).post {
+                                    audioTrack?.write(audio, 0, audio.size)
+                                }
+                            }
+                        }
+                    } catch (e: java.io.EOFException) {
+                        break
+                    } catch (e: Exception) {
+                        if (wsConnected) Log.w(TAG, "WS读异常: ${e.message}")
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "WebSocket连接失败: ${e.message}")
             }
-        })
+            wsConnected = false
+        }
+        wsThread!!.start()
+    }
+
+    private fun sendWsText(msg: String) {
+        try {
+            val payload = msg.toByteArray(Charsets.UTF_8)
+            val len = payload.size
+            val frame = java.io.ByteArrayOutputStream()
+            frame.write(0x81) // FIN + text opcode
+            if (len < 126) {
+                frame.write(len)
+            } else if (len < 65536) {
+                frame.write(126)
+                frame.write(java.nio.ByteBuffer.allocate(2).putShort(len.toShort()).array())
+            }
+            frame.write(payload)
+            wsOutput?.write(frame.toByteArray())
+            wsOutput?.flush()
+        } catch (e: Exception) {}
+    }
+
+    private fun disconnectWebSocket() {
+        wsConnected = false
+        try { wsSocket?.close() } catch (e: Exception) {}
+        wsSocket = null; wsInput = null; wsOutput = null
     }
 
     // ─── 通知栏 ───
@@ -248,9 +283,7 @@ class VoiceCallService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID,
-                "念安通话",
-                NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID, "念安通话", NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "念安语音通话状态"
                 setSound(null, null)
@@ -266,7 +299,6 @@ class VoiceCallService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("通话中 — 念安")
             .setContentText("蓝牙耳机实时对话")
@@ -275,7 +307,6 @@ class VoiceCallService : Service() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .build()
-
         startForeground(NOTIFICATION_ID, notification)
     }
 }
