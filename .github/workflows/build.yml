@@ -40,7 +40,7 @@ jobs:
 
       - name: Build APK
         working-directory: ${{ github.workspace }}
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
