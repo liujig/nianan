@@ -2,17 +2,11 @@ package com.nianan.app
 
 import android.Manifest
 import android.app.Activity
-import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
-import android.telecom.PhoneAccount
-import android.telecom.PhoneAccountHandle
-import android.telecom.TelecomManager
-import android.util.Log
 import android.webkit.GeolocationPermissions
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
@@ -29,18 +23,9 @@ class MainActivity : AppCompatActivity() {
     private val FILE_CHOOSER_REQUEST = 1001
     private val PERMISSION_REQUEST = 1002
     private lateinit var wv: WebView
-    private var phoneAccountHandle: PhoneAccountHandle? = null
-    private var callActive = false
-
-    companion object {
-        const val TAG = "NianAnMain"
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // 注册电话账户（用于系统通话框架）
-        registerPhoneAccount()
 
         wv = WebView(this).apply {
             settings.apply {
@@ -84,9 +69,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 暴露通话接口给前端
             addJavascriptInterface(CallBridge(), "nianan")
-
             loadUrl("http://127.0.0.1:9191")
         }
 
@@ -94,67 +77,30 @@ class MainActivity : AppCompatActivity() {
         requestRuntimePermissions()
     }
 
-    // ─── JavaScript 桥接 ───
-
     inner class CallBridge {
         @JavascriptInterface
         fun startCall() {
             runOnUiThread {
-                if (!callActive) placeCall()
+                val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
+                    action = VoiceCallService.ACTION_START_CALL
+                }
+                startForegroundService(intent)
             }
         }
 
         @JavascriptInterface
         fun endCall() {
             runOnUiThread {
-                CallConnectionService.currentConnection?.endCall()
-                callActive = false
+                val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
+                    action = VoiceCallService.ACTION_STOP_CALL
+                }
+                startService(intent)
             }
         }
 
         @JavascriptInterface
-        fun isCallActive(): Boolean = callActive
+        fun isCallActive(): Boolean = false
     }
-
-    // ─── 电话账户注册 ───
-
-    private fun registerPhoneAccount() {
-        val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-        phoneAccountHandle = PhoneAccountHandle(
-            ComponentName(this, CallConnectionService::class.java),
-            "nianan"
-        )
-
-        val phoneAccount = PhoneAccount.builder(phoneAccountHandle, "念安")
-            .setCapabilities(PhoneAccount.CAPABILITY_SELF_MANAGED)
-            .build()
-
-        telecomManager.registerPhoneAccount(phoneAccount)
-        Log.i(TAG, "PhoneAccount 已注册")
-    }
-
-    private fun placeCall() {
-        val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-        val uri = Uri.fromParts("tel", "0000", null)
-        val extras = Bundle().apply {
-            putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle)
-        }
-        try {
-            telecomManager.placeCall(uri, extras)
-            callActive = true
-            Log.i(TAG, "去电已发起")
-        } catch (e: Exception) {
-            Log.e(TAG, "发起通话失败: ${e.message}")
-            // 降级：直接启动 VoiceCallService（不走 Telecom）
-            val intent = Intent(this, VoiceCallService::class.java).apply {
-                action = VoiceCallService.ACTION_START_CALL
-            }
-            startForegroundService(intent)
-            callActive = true
-        }
-    }
-
-    // ─── 权限 ───
 
     private fun requestRuntimePermissions() {
         val needed = mutableListOf<String>()
@@ -180,13 +126,5 @@ class MainActivity : AppCompatActivity() {
         }
         filePathCallback?.onReceiveValue(results)
         filePathCallback = null
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (phoneAccountHandle != null) {
-            val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-            telecomManager.unregisterPhoneAccount(phoneAccountHandle!!)
-        }
     }
 }
