@@ -85,7 +85,7 @@ class MainActivity : AppCompatActivity() {
                     val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
                         action = VoiceCallService.ACTION_START_CALL
                     }
-                    startForegroundService(intent)
+                    startService(intent)  // 测试：先用startService代替startForegroundService
                 } catch (e: Exception) {
                     java.io.File("/storage/emulated/0/nianan_crash.txt").writeText("startCall crash: ${e.message}")
                 }
