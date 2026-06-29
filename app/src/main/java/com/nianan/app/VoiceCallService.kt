@@ -164,8 +164,27 @@ class VoiceCallService : Service() {
     }
 
     private fun playAudio(wav: ByteArray) {
-        val pcm = if (wav.size > 44) wav.copyOfRange(44, wav.size) else wav
-        audioTrack?.write(pcm, 0, pcm.size)
+        try {
+            // 跳过WAV头: 标准44字节，但TTS输出可能不同
+            var offset = 0
+            if (wav.size > 12 && String(wav, 0, 4) == "RIFF" && String(wav, 8, 4) == "WAVE") {
+                offset = 44  // 默认跳过标准WAV头
+                // 可能有额外的chunk在data之前
+                while (offset + 8 < wav.size) {
+                    val chunkId = String(wav, offset, 4)
+                    val chunkSize = java.nio.ByteBuffer.wrap(wav, offset + 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt()
+                    if (chunkId == "data") {
+                        offset += 8
+                        break
+                    }
+                    offset += 8 + chunkSize
+                }
+            }
+            if (offset < wav.size) {
+                val pcm = wav.copyOfRange(offset, wav.size)
+                audioTrack?.write(pcm, 0, pcm.size)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun stopPlayback() {
