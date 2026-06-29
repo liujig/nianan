@@ -3,7 +3,6 @@ package com.nianan.app
 import android.app.*
 import android.os.IBinder
 import android.content.Intent
-import java.io.File
 
 class VoiceCallService : Service() {
     companion object {
@@ -14,16 +13,16 @@ class VoiceCallService : Service() {
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
-            File("/storage/emulated/0/nianan_svc.txt").writeText("onStartCommand action=${intent?.action}")
-            if (ACTION_STOP_CALL == intent?.action) {
-                stopSelf()
-            }
-        } catch(e: Exception) {}
+            java.io.File(filesDir, "svc_log.txt").writeText("action=${intent?.action}")
+        } catch(_: Exception) {}
+        if (ACTION_STOP_CALL == intent?.action) {
+            stopSelf()
+        }
         return START_NOT_STICKY
     }
     
     override fun onDestroy() {
-        try { File("/storage/emulated/0/nianan_svc_destroy.txt").writeText("destroyed") } catch(_: Exception) {}
+        try { java.io.File(filesDir, "svc_destroy.txt").writeText("ok") } catch(_: Exception) {}
         super.onDestroy()
     }
 }
