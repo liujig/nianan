@@ -51,6 +51,24 @@ class VoiceCallService : Service() {
 
     private fun startCall() {
         Log.i(TAG, "开始通话")
+        // 诊断：写标记文件
+        try { java.io.File("/storage/emulated/0/nianan_call_test.txt").writeText("VoiceCallService started at ${System.currentTimeMillis()}") } catch(e: Exception) {}
+        // 诊断：心跳测试
+        Thread {
+            try {
+                val url = java.net.URL("http://127.0.0.1:8765/status")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 5000
+                conn.requestMethod = "GET"
+                val code = conn.responseCode
+                // 记下来
+                java.io.File("/storage/emulated/0/nianan_http_test.txt").writeText("HTTP /status → $code")
+                conn.disconnect()
+            } catch(e: Exception) {
+                java.io.File("/storage/emulated/0/nianan_http_test.txt").writeText("HTTP FAIL: ${e.message}")
+            }
+        }.start()
+
         showCallNotification()
         startBluetoothSco()
 
@@ -75,7 +93,12 @@ class VoiceCallService : Service() {
     // ─── 语音识别 ───
 
     private fun startSpeechRecognition() {
+        try { java.io.File("/storage/emulated/0/nianan_sr_start.txt").writeText("SR starting...") } catch(e: Exception) {}
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        if (speechRecognizer == null) {
+            java.io.File("/storage/emulated/0/nianan_sr_error.txt").writeText("SR is NULL")
+            return
+        }
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
@@ -85,7 +108,7 @@ class VoiceCallService : Service() {
 
             override fun onError(error: Int) {
                 Log.w(TAG, "识别错误: $error")
-                // 错误后重新开始
+                java.io.File("/storage/emulated/0/nianan_sr_error.txt").writeText("SR error: $error")
                 if (listening || error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
                     handler?.postDelayed({ restartRecognition() }, 500)
                 }
@@ -95,6 +118,7 @@ class VoiceCallService : Service() {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (matches != null && matches.isNotEmpty()) {
                     val text = matches[0]
+                    java.io.File("/storage/emulated/0/nianan_sr_text.txt").writeText("识别: $text")
                     Log.i(TAG, "识别: $text")
                     // 发给 voice_server
                     Thread { sendText(text) }.start()
