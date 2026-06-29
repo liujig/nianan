@@ -7,7 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.media.*
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -83,7 +85,7 @@ class VoiceCallService : Service() {
         connectWebSocket()
 
         // 延迟启动录音（等 WebSocket 连上）
-        android.os.Handler(mainLooper).postDelayed({
+        android.os.Handler(Looper.getMainLooper()).postDelayed({
             startRecording()
             startPlayback()
         }, 500)
@@ -230,7 +232,7 @@ class VoiceCallService : Service() {
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket 断开: ${t.message}")
                 // 3秒后重连
-                android.os.Handler(mainLooper).postDelayed({
+                android.os.Handler(Looper.getMainLooper()).postDelayed({
                     if (recording) connectWebSocket()
                 }, 3000)
             }
