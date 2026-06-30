@@ -173,7 +173,7 @@ class VoiceCallService : Service() {
                 android.util.Log.w("nianan-ws", "超过最大重连次数($MAX_RECONNECT)，停止")
                 handler?.post { stopSelf() }
             }
-        }.start()
+        }.apply { start() }
     }
 
     private fun scheduleReconnect() {
@@ -214,7 +214,7 @@ class VoiceCallService : Service() {
                     }
                 } catch (_: Exception) { break }
             }
-        }.start()
+        }.apply { start() }
     }
 
     private fun stopPing() {
@@ -242,7 +242,7 @@ class VoiceCallService : Service() {
                     sendFrame(frame.copyOf(len))
                 } catch (_: Exception) { break }
             }
-        }.start()
+        }.apply { start() }
     }
 
     private fun stopRecording() {
