@@ -51,16 +51,22 @@ jobs:
           export ANDROID_HOME=/usr/local/lib/android/sdk
           unset ANDROID_SDK_ROOT
           gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble.log
+          echo "=== APK search ===" >> assemble.log
+          find . -name "*.apk" -type f 2>/dev/null >> assemble.log
+          find . -name "*.apk" -type f 2>/dev/null | head -1 > /tmp/apk_path.txt
+          ls -la app/build/outputs/apk/ 2>/dev/null >> assemble.log || true
 
       - name: Upload logs to gh-pages
         if: always()
         run: |
           # 先备份所有文件（切分支会清空）
           cp kotlin.log assemble.log /tmp/ 2>/dev/null || true
-          # 找APK
-          APK=$(find app/build -name "*.apk" -type f 2>/dev/null | head -1)
-          echo "APK found: $APK"
-          if [ -n "$APK" ]; then cp "$APK" /tmp/app-debug.apk; fi
+          # 用Assemble步骤保存的APK路径
+          if [ -s /tmp/apk_path.txt ]; then
+            APK_PATH=$(cat /tmp/apk_path.txt)
+            echo "APK from file: $APK_PATH"
+            cp "$APK_PATH" /tmp/app-debug.apk 2>/dev/null || true
+          fi
           # 切gh-pages
           git config user.email "ci@bot" && git config user.name "CI"
           git checkout --orphan gh-pages 2>/dev/null || git checkout gh-pages
