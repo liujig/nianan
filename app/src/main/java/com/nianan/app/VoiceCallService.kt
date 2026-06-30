@@ -5,17 +5,18 @@ import android.content.Intent
 import android.media.*
 import android.os.*
 import java.io.*
-import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
+import javax.net.ssl.SSLContext
+import java.util.concurrent.*
 
 class VoiceCallService : Service() {
 
     companion object {
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "nc"
-        const val VOICE_URL = "http://127.0.0.1:8765/voice_audio"
+        const val WS_URL = "ws://127.0.0.1:8765/ws"
         const val SAMPLE_RATE = 16000
-        const val CHUNK_SECS = 3
+        const val CHUNK_MS = 100  // 100ms per frame for low latency
     }
 
     private var audioRecord: AudioRecord? = null
@@ -24,6 +25,10 @@ class VoiceCallService : Service() {
     private var scoStarted = false
     private var recording = false
     private var handler: Handler? = null
+    private var wsThread: Thread? = null
+    private var wsInput: InputStream? = null
+    private var wsOutput: OutputStream? = null
+    private var socket: java.net.Socket? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -41,13 +46,14 @@ class VoiceCallService : Service() {
         showNotification()
         startBluetoothSco()
         acquireWakeLock()
-        startRecording()
+        connectWebSocket()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         recording = false
         stopRecording()
+        disconnectWebSocket()
         stopMediaPlayer()
         stopBluetoothSco()
         wakeLock?.release()
@@ -64,12 +70,76 @@ class VoiceCallService : Service() {
         else @Suppress("DEPRECATION") Notification.Builder(this)
         startForeground(NOTIFICATION_ID, nb
             .setContentTitle("通话中 — 念安")
-            .setContentText("蓝牙耳机实时对话")
+            .setContentText("WebSocket实时对话")
             .setSmallIcon(android.R.drawable.ic_menu_call)
             .setOngoing(true).setContentIntent(pi).build())
     }
 
-    // ─── 录音+发送 ───
+    // ─── WebSocket 连接 ───
+    private fun connectWebSocket() {
+        wsThread = Thread {
+            try {
+                socket = java.net.Socket("127.0.0.1", 8765)
+                wsInput = BufferedInputStream(socket!!.getInputStream())
+                wsOutput = BufferedOutputStream(socket!!.getOutputStream())
+
+                // WebSocket 握手
+                val key = java.util.Base64.getEncoder().encodeToString(
+                    "nianan-ws-key-001".toByteArray())
+                val handshake = buildString {
+                    append("GET /ws HTTP/1.1\r\n")
+                    append("Host: 127.0.0.1:8765\r\n")
+                    append("Upgrade: websocket\r\n")
+                    append("Connection: Upgrade\r\n")
+                    append("Sec-WebSocket-Key: $key\r\n")
+                    append("\r\n")
+                }
+                wsOutput!!.write(handshake.toByteArray())
+                wsOutput!!.flush()
+
+                // 读握手响应
+                val buf = ByteArray(4096)
+                var pos = 0
+                while (pos < buf.size) {
+                    val n = wsInput!!.read(buf, pos, 1)
+                    if (n < 0) break
+                    pos++
+                    if (pos >= 4 && buf[pos-4] == '\r'.code.toByte()
+                        && buf[pos-3] == '\n'.code.toByte()
+                        && buf[pos-2] == '\r'.code.toByte()
+                        && buf[pos-1] == '\n'.code.toByte()) break
+                }
+                val response = String(buf, 0, pos)
+                if (!response.contains("101")) {
+                    android.util.Log.e("nianan-ws", "握手失败: $response")
+                    stopSelf()
+                    return@Thread
+                }
+
+                // 启动录音+发送
+                startRecording()
+
+                // 接收回复
+                while (recording || socket!!.isConnected) {
+                    val frame = readFrame()
+                    if (frame != null && frame.isNotEmpty()) {
+                        handler?.post { playAudio(frame) }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("nianan-ws", "连接失败", e)
+                stopSelf()
+            }
+        }.start()
+    }
+
+    private fun disconnectWebSocket() {
+        try { wsOutput?.close() } catch (_: Exception) {}
+        try { wsInput?.close() } catch (_: Exception) {}
+        try { socket?.close() } catch (_: Exception) {}
+    }
+
+    // ─── 录音 + WebSocket 发送 ───
     private fun startRecording() {
         val bufSize = AudioRecord.getMinBufferSize(SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -79,74 +149,67 @@ class VoiceCallService : Service() {
         recording = true
         audioRecord?.startRecording()
 
-        val chunkSize = SAMPLE_RATE * 2 * CHUNK_SECS
-        val chunk = ByteArray(chunkSize)
-        var pos = 0
+        val frameBytes = SAMPLE_RATE * 2 * CHUNK_MS / 1000  // ~3200 bytes
+        val frame = ByteArray(frameBytes)
 
         Thread {
             while (recording) {
-                val len = audioRecord?.read(chunk, pos, chunkSize - pos) ?: break
-                if (len < 0) break
-                pos += len
-                if (pos >= chunkSize) {
-                    val data = chunk.copyOf(pos)
-                    pos = 0
-                    try {
-                        val respAudio = sendAudio(data)
-                        if (respAudio != null && respAudio.isNotEmpty()) {
-                            handler?.post { playAudio(respAudio) }
-                        }
-                    } catch (_: Exception) {}
-                }
+                val len = audioRecord?.read(frame, 0, frameBytes) ?: break
+                if (len <= 0) break
+                try {
+                    sendFrame(frame.copyOf(len))
+                } catch (_: Exception) { break }
             }
         }.start()
-    }
-
-    private fun sendAudio(pcm: ByteArray): ByteArray? {
-        // PCM转WAV
-        val wav = ByteArrayOutputStream(pcm.size + 44)
-        val le = java.nio.ByteOrder.LITTLE_ENDIAN
-        val b4 = java.nio.ByteBuffer.allocate(4).order(le)
-        wav.write("RIFF".toByteArray())
-        b4.putInt(0, pcm.size + 36); wav.write(b4.array())
-        wav.write("WAVE".toByteArray())
-        wav.write("fmt ".toByteArray())
-        b4.putInt(0, 16); wav.write(b4.array())
-        b4.putShort(0, 1.toShort()); wav.write(b4.array(), 0, 2)
-        b4.putShort(0, 1.toShort()); wav.write(b4.array(), 0, 2)
-        b4.putInt(0, SAMPLE_RATE); wav.write(b4.array())
-        b4.putInt(0, SAMPLE_RATE * 2); wav.write(b4.array())
-        b4.putShort(0, 2.toShort()); wav.write(b4.array(), 0, 2)
-        b4.putShort(0, 16.toShort()); wav.write(b4.array(), 0, 2)
-        wav.write("data".toByteArray())
-        b4.putInt(0, pcm.size); wav.write(b4.array())
-        wav.write(pcm)
-
-        val conn = URL(VOICE_URL).openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"; conn.doOutput = true
-        conn.connectTimeout = 10000; conn.readTimeout = 20000
-        conn.setRequestProperty("Content-Type", "application/octet-stream")
-        conn.outputStream.write(wav.toByteArray())
-        conn.outputStream.flush(); conn.outputStream.close()
-
-        if (conn.responseCode == 200) {
-            val inp = conn.inputStream
-            val out = ByteArrayOutputStream()
-            val buf = ByteArray(4096)
-            var n: Int
-            while (inp.read(buf).also { n = it } != -1) out.write(buf, 0, n)
-            inp.close()
-            conn.disconnect()
-            val audio = out.toByteArray()
-            return if (audio.size > 44) audio else null
-        }
-        conn.disconnect()
-        return null
     }
 
     private fun stopRecording() {
         audioRecord?.apply { stop(); release() }
         audioRecord = null
+    }
+
+    // ─── WebSocket 帧读写 ───
+    private fun sendFrame(data: ByteArray) {
+        val out = wsOutput ?: return
+        synchronized(out) {
+            // Binary frame: FIN=1, opcode=2, mask=0, no mask key
+            val header = ByteArray(2)
+            header[0] = 0x82.toByte()  // FIN + BINARY
+            val len = data.size
+            if (len < 126) {
+                header[1] = len.toByte()
+                out.write(header)
+            } else if (len < 65536) {
+                header[1] = 126.toByte()
+                out.write(header)
+                out.write((len shr 8) and 0xFF)
+                out.write(len and 0xFF)
+            }
+            out.write(data)
+            out.flush()
+        }
+    }
+
+    private fun readFrame(): ByteArray? {
+        val inp = wsInput ?: return null
+        // 读2字节头
+        val hdr = ByteArray(2)
+        if (inp.read(hdr) < 2) return null
+        val opcode = hdr[0].toInt() and 0x0F
+        var len = hdr[1].toInt() and 0x7F
+        if (len == 126) {
+            val ext = ByteArray(2)
+            if (inp.read(ext) < 2) return null
+            len = ((ext[0].toInt() and 0xFF) shl 8) or (ext[1].toInt() and 0xFF)
+        }
+        val data = ByteArray(len)
+        var pos = 0
+        while (pos < len) {
+            val n = inp.read(data, pos, len - pos)
+            if (n < 0) return null
+            pos += n
+        }
+        return if (opcode == 2) data else null  // binary only
     }
 
     // ─── MediaPlayer 播放 ───
