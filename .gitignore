@@ -1,0 +1,48 @@
+# ============================================
+# nianan APK - 念安对话窗口
+# 注意：此文件保护念安自身程序不泄露
+# ============================================
+
+# ---- 编译产物 ----
+build/
+.gradle/
+*.apk
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+
+# ---- 本地配置（含敏感路径）----
+local.properties
+*.env
+*.key
+*.jks
+*.keystore
+
+# ---- IDE ----
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- 系统文件 ----
+.DS_Store
+Thumbs.db
+
+# ---- 念安身体保护：确保不误提交念安自身 ----
+# 如果以下路径出现在项目中，拒绝提交
+nianan_brain/
+.hermes/
+sdcard/
+
+# ---- Gradle wrapper 保留项 ----
+# gradle-wrapper.jar 应留在 git 中（CI 需要）
+# gradle-wrapper.properties 应留在 git 中
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties

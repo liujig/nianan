@@ -1,0 +1,7 @@
+# 阿里云 Codeup 流水线
+# 继承 Android 模板 + APK 产物上传
+build:
+  type: android
+  artifacts:
+    - path: app/build/outputs/apk/debug/app-debug.apk
+      name: nianan-debug.apk
