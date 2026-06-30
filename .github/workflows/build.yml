@@ -52,8 +52,11 @@ jobs:
       - name: Assemble APK
         run: |
           set -o pipefail
-          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble.log
+          gradle assembleDebug --no-daemon --stacktrace --refresh-dependencies 2>&1 | tee assemble.log
           tail -50 assemble.log >> $GITHUB_STEP_SUMMARY
+          # 把错误输出为GitHub annotation
+          ERR=$(grep -A3 "What went wrong\|FAILURE\|Could not resolve" assemble.log | head -20 | tr '\n' ' ')
+          echo "::error::$ERR"
 
       - name: Upload logs
         if: always()
