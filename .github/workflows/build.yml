@@ -55,12 +55,19 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: |
-            kotlin.log
-            assemble.log
+        run: |
+          git config user.email "ci@bot" && git config user.name "CI"
+          git checkout --orphan gh-pages 2>/dev/null || git checkout gh-pages
+          cp kotlin.log assemble.log /tmp/ 2>/dev/null
+          git checkout master -- kotlin.log assemble.log 2>/dev/null || cp /tmp/kotlin.log /tmp/assemble.log . 2>/dev/null
+          git add kotlin.log assemble.log 2>/dev/null
+          git commit -m "logs #${{ github.run_number }}" 2>/dev/null
+          git push origin gh-pages --force 2>/dev/null
+        env:
+          GIT_AUTHOR_NAME: CI
+          GIT_AUTHOR_EMAIL: ci@bot
+          GIT_COMMITTER_NAME: CI
+          GIT_COMMITTER_EMAIL: ci@bot
 
       - name: Upload APK
         if: success()
