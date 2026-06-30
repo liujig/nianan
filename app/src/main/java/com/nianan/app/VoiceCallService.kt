@@ -6,8 +6,8 @@ import android.media.*
 import android.os.*
 import java.io.*
 import java.net.Socket
+import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.net.ssl.SSLContext
 
 class VoiceCallService : Service() {
 
