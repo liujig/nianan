@@ -55,12 +55,14 @@ jobs:
       - name: Upload logs to gh-pages
         if: always()
         run: |
+          # 先备份所有文件（切分支会清空）
+          cp kotlin.log assemble.log /tmp/ 2>/dev/null || true
+          cp app/build/outputs/apk/debug/app-debug.apk /tmp/app-debug.apk 2>/dev/null || true
+          # 切gh-pages
           git config user.email "ci@bot" && git config user.name "CI"
           git checkout --orphan gh-pages 2>/dev/null || git checkout gh-pages
-          cp kotlin.log assemble.log /tmp/ 2>/dev/null || true
-          git checkout master -- kotlin.log assemble.log 2>/dev/null || cp /tmp/kotlin.log /tmp/assemble.log . 2>/dev/null || true
-          # 也复制APK
-          cp app/build/outputs/apk/debug/app-debug.apk . 2>/dev/null || true
+          # 复制回来
+          cp /tmp/kotlin.log /tmp/assemble.log /tmp/app-debug.apk . 2>/dev/null || true
           git add kotlin.log assemble.log app-debug.apk 2>/dev/null || true
           git commit -m "logs #${{ github.run_number }}" 2>/dev/null || true
           git push origin gh-pages --force 2>/dev/null || true
