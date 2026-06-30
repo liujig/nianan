@@ -33,9 +33,8 @@ jobs:
           mv cmdline-tools $ANDROID_HOME/cmdline-tools/latest
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses > /dev/null 2>&1
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-33" "build-tools;33.0.0"
-          echo "sdk.dir=$ANDROID_HOME" >> $GITHUB_WORKSPACE/local.properties
+          echo "sdk.dir=$ANDROID_HOME" >> local.properties
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "SDK installed: $(ls $ANDROID_HOME/platforms/android-33 2>/dev/null | head -3)"
 
       - name: Setup Gradle 8.5
         run: |
@@ -48,11 +47,18 @@ jobs:
           set -o pipefail
           gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat build.log >> $GITHUB_STEP_SUMMARY
+          tail -100 build.log >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          ls -la app/build/outputs/apk/debug/ 2>/dev/null || echo "no apk dir"
 
-      - name: Upload APK artifact
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: nianan-debug
