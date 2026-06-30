@@ -27,16 +27,14 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          export ANDROID_HOME=$HOME/android-sdk
-          mkdir -p $ANDROID_HOME/cmdline-tools
-          cd /tmp
-          wget -q --timeout=120 https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q commandlinetools-linux-*.zip
-          mv cmdline-tools $ANDROID_HOME/cmdline-tools/latest
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses > /dev/null 2>&1
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-33" "build-tools;33.0.0"
+          # 用系统预装的SDK，只补装需要的组件
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-33" "build-tools;33.0.0" 2>&1 || echo "SDK components may already exist"
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
 
       - name: Setup Gradle 8.5
         run: |
@@ -45,34 +43,27 @@ jobs:
           echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
 
       - name: Compile Kotlin
-        id: kotlin
         continue-on-error: true
         run: gradle compileDebugKotlin --no-daemon --stacktrace 2>&1 | tee kotlin.log
 
       - name: Assemble APK
         run: |
           set -o pipefail
-          gradle assembleDebug --no-daemon --stacktrace --refresh-dependencies 2>&1 | tee assemble.log
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble.log
           tail -50 assemble.log >> $GITHUB_STEP_SUMMARY
-          # 把错误输出为GitHub annotation
-          ERR=$(grep -A3 "What went wrong\|FAILURE\|Could not resolve" assemble.log | head -20 | tr '\n' ' ')
+          ERR=$(grep -A3 "What went wrong\|FAILURE\|Could not" assemble.log | head -20 | tr '\n' ' ')
           echo "::error::$ERR"
 
-      - name: Upload logs
+      - name: Upload logs to gh-pages
         if: always()
         run: |
           git config user.email "ci@bot" && git config user.name "CI"
           git checkout --orphan gh-pages 2>/dev/null || git checkout gh-pages
-          cp kotlin.log assemble.log /tmp/ 2>/dev/null
-          git checkout master -- kotlin.log assemble.log 2>/dev/null || cp /tmp/kotlin.log /tmp/assemble.log . 2>/dev/null
-          git add kotlin.log assemble.log 2>/dev/null
-          git commit -m "logs #${{ github.run_number }}" 2>/dev/null
-          git push origin gh-pages --force 2>/dev/null
-        env:
-          GIT_AUTHOR_NAME: CI
-          GIT_AUTHOR_EMAIL: ci@bot
-          GIT_COMMITTER_NAME: CI
-          GIT_COMMITTER_EMAIL: ci@bot
+          cp kotlin.log assemble.log /tmp/ 2>/dev/null || true
+          git checkout master -- kotlin.log assemble.log 2>/dev/null || cp /tmp/kotlin.log /tmp/assemble.log . 2>/dev/null || true
+          git add kotlin.log assemble.log 2>/dev/null || true
+          git commit -m "logs #${{ github.run_number }}" 2>/dev/null || true
+          git push origin gh-pages --force 2>/dev/null || true
 
       - name: Upload APK
         if: success()
