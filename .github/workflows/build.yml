@@ -33,8 +33,9 @@ jobs:
           mv cmdline-tools $ANDROID_HOME/cmdline-tools/latest
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses > /dev/null 2>&1
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-33" "build-tools;33.0.0"
-          echo "sdk.dir=$ANDROID_HOME" >> local.properties
+          echo "sdk.dir=$ANDROID_HOME" >> $GITHUB_WORKSPACE/local.properties
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "SDK installed: $(ls $ANDROID_HOME/platforms/android-33 2>/dev/null | head -3)"
 
       - name: Setup Gradle 8.5
         run: |
@@ -44,25 +45,16 @@ jobs:
 
       - name: Build APK
         run: |
+          set -o pipefail
           gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
-          echo "=== Find APK ==="
-          find . -name "*.apk" -type f 2>/dev/null
-          echo "=== ls outputs ==="
-          find app/build/outputs -type f 2>/dev/null | head -20
-          echo "=== Copy APK ==="
-          APK=$(find . -path "*/apk/debug/*.apk" -type f 2>/dev/null | head -1)
-          if [ -n "$APK" ]; then
-            cp "$APK" nianan-debug.apk
-            ls -la nianan-debug.apk
-          else
-            echo "NO APK FOUND!"
-            # 看gradle输出目录结构
-            find app/build -maxdepth 4 -type d 2>/dev/null
-          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -la app/build/outputs/apk/debug/ 2>/dev/null || echo "no apk dir"
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nianan-debug
-          path: nianan-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
