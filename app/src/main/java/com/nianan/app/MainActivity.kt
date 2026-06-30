@@ -83,12 +83,10 @@ class MainActivity : AppCompatActivity() {
         fun startCall() {
             runOnUiThread {
                 try {
-                    val intent = Intent(this@MainActivity, VoiceCallService::class.java)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent)
-                    } else {
-                        startService(intent)
+                    val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
+                        action = VoiceCallService.ACTION_START_CALL
                     }
+                    startService(intent)
                 } catch (e: Exception) {
                     android.util.Log.e("nianan", "startCall failed", e)
                 }
