@@ -48,13 +48,9 @@ jobs:
 
       - name: Assemble APK
         run: |
-          set -o pipefail
           export ANDROID_HOME=/usr/local/lib/android/sdk
           unset ANDROID_SDK_ROOT
           gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble.log
-          tail -50 assemble.log >> $GITHUB_STEP_SUMMARY
-          ERR=$(grep -A3 "What went wrong\|FAILURE\|Could not" assemble.log | head -20 | tr '\n' ' ')
-          echo "::error::$ERR"
 
       - name: Upload logs to gh-pages
         if: always()
