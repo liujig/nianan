@@ -59,7 +59,9 @@ jobs:
           git checkout --orphan gh-pages 2>/dev/null || git checkout gh-pages
           cp kotlin.log assemble.log /tmp/ 2>/dev/null || true
           git checkout master -- kotlin.log assemble.log 2>/dev/null || cp /tmp/kotlin.log /tmp/assemble.log . 2>/dev/null || true
-          git add kotlin.log assemble.log 2>/dev/null || true
+          # 也复制APK
+          cp app/build/outputs/apk/debug/app-debug.apk . 2>/dev/null || true
+          git add kotlin.log assemble.log app-debug.apk 2>/dev/null || true
           git commit -m "logs #${{ github.run_number }}" 2>/dev/null || true
           git push origin gh-pages --force 2>/dev/null || true
 
