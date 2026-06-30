@@ -35,6 +35,7 @@ jobs:
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-33" "build-tools;33.0.0"
           echo "sdk.dir=$ANDROID_HOME" >> $GITHUB_WORKSPACE/local.properties
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "SDK installed: $(ls $ANDROID_HOME/platforms/android-33 2>/dev/null | head -3)"
 
       - name: Setup Gradle 8.5
         run: |
@@ -43,19 +44,13 @@ jobs:
           echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
 
       - name: Build APK
-        id: build
-        continue-on-error: true
-        run: gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
-
-      - name: Upload build log (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Upload APK artifact
-        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: nianan-debug
