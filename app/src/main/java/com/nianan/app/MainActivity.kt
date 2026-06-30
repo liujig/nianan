@@ -81,27 +81,12 @@ class MainActivity : AppCompatActivity() {
     inner class CallBridge {
         @JavascriptInterface
         fun startCall() {
-            runOnUiThread {
-                try {
-                    val intent = Intent(this@MainActivity, VoiceCallService::class.java).apply {
-                        action = VoiceCallService.ACTION_START_CALL
-                    }
-                    startService(intent)
-                } catch (e: Exception) {
-                    android.util.Log.e("nianan", "startCall failed", e)
-                }
-            }
+            android.util.Log.i("nianan", "startCall placeholder")
         }
 
         @JavascriptInterface
         fun endCall() {
-            runOnUiThread {
-                try {
-                    stopService(Intent(this@MainActivity, VoiceCallService::class.java))
-                } catch (e: Exception) {
-                    android.util.Log.e("nianan", "endCall failed", e)
-                }
-            }
+            android.util.Log.i("nianan", "endCall placeholder")
         }
 
         @JavascriptInterface
