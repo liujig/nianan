@@ -42,24 +42,25 @@ jobs:
           unzip -q gradle-8.5-bin.zip
           echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
 
-      - name: Build APK
+      - name: Compile Kotlin
+        id: kotlin
+        continue-on-error: true
+        run: gradle compileDebugKotlin --no-daemon --stacktrace 2>&1 | tee kotlin.log
+
+      - name: Assemble APK
         run: |
           set -o pipefail
-          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
-          # 上传到pastebin
-          PB_URL=$(tail -100 build.log | nc termbin.com 9999 2>/dev/null || echo "")
-          echo "### Build Result" >> $GITHUB_STEP_SUMMARY
-          echo "Pastebin: $PB_URL" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -100 build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble.log
+          tail -50 assemble.log >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload build log
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: build.log
+          name: build-logs
+          path: |
+            kotlin.log
+            assemble.log
 
       - name: Upload APK
         if: success()
