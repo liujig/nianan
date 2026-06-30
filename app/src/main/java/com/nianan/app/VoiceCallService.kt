@@ -2,6 +2,7 @@ package com.nianan.app
 
 import android.app.*
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.*
 import android.os.*
 import java.io.*
@@ -83,7 +84,12 @@ class VoiceCallService : Service() {
     }
 
     private fun showNotification() {
-        startForeground(NOTIFICATION_ID, buildNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            @Suppress("DEPRECATION")
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
     }
 
     // ─── WebSocket 连接（含断线重连） ───
