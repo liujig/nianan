@@ -28,14 +28,11 @@ jobs:
           export ANDROID_HOME=$HOME/android-sdk
           mkdir -p $ANDROID_HOME/cmdline-tools
           cd /tmp
-          # 下载cmdline-tools
           wget -q --timeout=120 https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q commandlinetools-linux-*.zip
           mv cmdline-tools $ANDROID_HOME/cmdline-tools/latest
-          # 装SDK
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses > /dev/null 2>&1
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platforms;android-33" "build-tools;33.0.0"
-          # 写local.properties
           echo "sdk.dir=$ANDROID_HOME" >> $GITHUB_WORKSPACE/local.properties
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
 
@@ -46,9 +43,19 @@ jobs:
           echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
 
       - name: Build APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        id: build
+        continue-on-error: true
+        run: gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Upload APK artifact
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: nianan-debug
