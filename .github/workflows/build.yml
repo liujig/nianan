@@ -27,14 +27,9 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          # 用系统预装的SDK，只补装需要的组件
           export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-33" "build-tools;33.0.0" 2>&1 || echo "SDK components may already exist"
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-33" "build-tools;33.0.0" 2>&1 || true
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
 
       - name: Setup Gradle 8.5
         run: |
@@ -42,44 +37,30 @@ jobs:
           unzip -q gradle-8.5-bin.zip
           echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
 
-      - name: Compile Kotlin
-        continue-on-error: true
-        run: gradle compileDebugKotlin --no-daemon --stacktrace 2>&1 | tee kotlin.log
-
-      - name: Assemble APK
+      - name: Build APK
         run: |
           export ANDROID_HOME=/usr/local/lib/android/sdk
           unset ANDROID_SDK_ROOT
-          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee assemble.log
-          echo "=== APK search ===" >> assemble.log
-          find . -name "*.apk" -type f 2>/dev/null >> assemble.log
-          find . -name "*.apk" -type f 2>/dev/null | head -1 > /tmp/apk_path.txt
-          ls -la app/build/outputs/apk/ 2>/dev/null >> assemble.log || true
+          gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Upload logs to gh-pages
-        if: always()
+      - name: Create Release and Upload APK
         run: |
-          # 先备份所有文件（切分支会清空）
-          cp kotlin.log assemble.log /tmp/ 2>/dev/null || true
-          # 用Assemble步骤保存的APK路径
-          if [ -s /tmp/apk_path.txt ]; then
-            APK_PATH=$(cat /tmp/apk_path.txt)
-            echo "APK from file: $APK_PATH"
-            cp "$APK_PATH" /tmp/app-debug.apk 2>/dev/null || true
-          fi
-          # 切gh-pages
-          git config user.email "ci@bot" && git config user.name "CI"
-          git checkout --orphan gh-pages 2>/dev/null || git checkout gh-pages
-          # 复制回来
-          cp /tmp/kotlin.log /tmp/assemble.log /tmp/app-debug.apk . 2>/dev/null || true
-          git add kotlin.log assemble.log app-debug.apk 2>/dev/null || true
-          git commit -m "logs #${{ github.run_number }}" 2>/dev/null || true
-          git push origin gh-pages --force 2>/dev/null || true
-
-      - name: Upload APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nianan-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 7
+          set -e
+          APK=$(find app/build -name "*.apk" -type f | head -1)
+          echo "APK: $APK"
+          ls -la "$APK"
+          cp "$APK" nianan-debug.apk
+          
+          # 创建tag
+          TAG="build-${{ github.run_number }}"
+          git tag "$TAG" 2>/dev/null || true
+          git push origin "$TAG" 2>/dev/null || true
+          
+          # 用GitHub CLI创建release
+          gh release create "$TAG" nianan-debug.apk \
+            --title "Build #${{ github.run_number }}" \
+            --notes "APK $(date)" \
+            --repo liujig/nianan \
+            2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ github.token }}
