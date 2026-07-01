@@ -41,8 +41,6 @@
             </intent-filter>
         </activity>
         <service android:name=".VoiceCallService" android:exported="false" android:foregroundServiceType="microphone"/>
-        <service android:name=".HermesGuardService" android:exported="false" android:foregroundServiceType="specialUse">
-            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="hermes_health_monitor"/>
-        </service>
+        <service android:name=".HermesGuardService" android:exported="false" android:foregroundServiceType="dataSync"/>
     </application>
 </manifest>

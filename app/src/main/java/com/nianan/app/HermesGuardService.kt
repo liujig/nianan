@@ -107,8 +107,8 @@ class HermesGuardService : Service() {
 
     private fun showNotification() {
         val notif = buildNotification()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notif)
