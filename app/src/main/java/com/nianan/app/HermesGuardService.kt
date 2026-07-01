@@ -45,7 +45,6 @@ class HermesGuardService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        showNotification()
         running.set(true)
         failureCount = 0
         startGuardLoop()
@@ -55,7 +54,6 @@ class HermesGuardService : Service() {
     override fun onDestroy() {
         running.set(false)
         guardThread?.interrupt()
-        stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
