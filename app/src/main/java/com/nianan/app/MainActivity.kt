@@ -77,8 +77,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(wv)
         requestRuntimePermissions()
 
-        // 守护启动放最后 — 等Activity完全就绪后再拉Service
-        startHermesGuard()
+        // TODO: 守护暂注释，排查闪退后恢复
+        // startHermesGuard()
     }
 
     inner class CallBridge {
