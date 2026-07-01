@@ -21,7 +21,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
@@ -42,6 +41,5 @@
             </intent-filter>
         </activity>
         <service android:name=".VoiceCallService" android:exported="false" android:foregroundServiceType="microphone"/>
-        <service android:name=".HermesGuardService" android:exported="false"/>
     </application>
 </manifest>
