@@ -112,7 +112,7 @@ class MainActivity : AppCompatActivity() {
     private fun startHermesGuard() {
         try {
             val intent = Intent(this, HermesGuardService::class.java)
-            startService(intent)
+            startForegroundService(intent)
             android.util.Log.i("nianan", "HermesGuardService 已启动")
         } catch (e: Exception) {
             android.util.Log.e("nianan", "HermesGuard启动失败", e)

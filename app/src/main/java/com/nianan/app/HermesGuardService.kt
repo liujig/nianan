@@ -8,15 +8,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Hermes 外部守护服务 — 独立Android进程，不受Termux连坐影响。
- *
- * 职责:
- *  1. 持久前台通知"念安守护中" — 系统OOM killer绕开带通知的进程
- *  2. 每10秒 HTTP GET http://127.0.0.1:8642/health — 检测Hermes Gateway存活
- *  3. 连续3次不通 → Runtime.exec("hermes gateway run") 自动拉起
- *  4. START_STICKY — 被杀后系统自动重启Service
- */
 class HermesGuardService : Service() {
 
     companion object {
@@ -36,7 +27,7 @@ class HermesGuardService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(CHANNEL_ID, "守护", NotificationManager.IMPORTANCE_LOW).apply {
                 setSound(null, null)
-                description = "念安Hermes守护服务"
+                description = "念安Hermes守护"
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
@@ -45,6 +36,7 @@ class HermesGuardService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        showNotification()
         running.set(true)
         failureCount = 0
         startGuardLoop()
@@ -54,6 +46,7 @@ class HermesGuardService : Service() {
     override fun onDestroy() {
         running.set(false)
         guardThread?.interrupt()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
@@ -80,8 +73,8 @@ class HermesGuardService : Service() {
 
     private fun showNotification() {
         val notif = buildNotification()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notif)
@@ -95,7 +88,6 @@ class HermesGuardService : Service() {
                 try {
                     Thread.sleep(CHECK_INTERVAL_MS)
                     if (!running.get()) break
-
                     val alive = checkHealth()
                     if (alive) {
                         failureCount = 0
