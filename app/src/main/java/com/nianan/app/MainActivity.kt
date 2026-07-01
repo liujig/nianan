@@ -28,6 +28,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 启动Hermes守护 — 独立Service，APP活着就一直守
+        startHermesGuard()
+
         wv = WebView(this).apply {
             settings.apply {
                 javaScriptEnabled = true
@@ -106,6 +109,16 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun isCallActive(): Boolean = false
+    }
+
+    private fun startHermesGuard() {
+        try {
+            val intent = Intent(this, HermesGuardService::class.java)
+            startForegroundService(intent)
+            android.util.Log.i("nianan", "HermesGuardService 已启动")
+        } catch (e: Exception) {
+            android.util.Log.e("nianan", "HermesGuard启动失败", e)
+        }
     }
 
     private fun requestRuntimePermissions() {
