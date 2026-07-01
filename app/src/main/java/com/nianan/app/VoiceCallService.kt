@@ -20,6 +20,9 @@ class VoiceCallService : Service() {
         const val CHUNK_MS = 100
         const val PING_INTERVAL_MS = 30000L
         const val MAX_RECONNECT = 5
+        const val HEALTH_URL = "http://127.0.0.1:8642/health"
+        const val GUARD_INTERVAL_MS = 10000L
+        const val MAX_GUARD_FAILURES = 3
     }
 
     private var audioRecord: AudioRecord? = null
@@ -35,6 +38,9 @@ class VoiceCallService : Service() {
     private var socket: Socket? = null
     private var pingThread: Thread? = null
     private var reconnectCount = 0
+    private var isGuardMode = false
+    private var guardThread: Thread? = null
+    private var guardFailures = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -49,13 +55,24 @@ class VoiceCallService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        showNotification()
-        startBluetoothSco()
-        acquireWakeLock()
-        running.set(true)
-        reconnectCount = 0
-        connectWebSocket()
-        return START_NOT_STICKY
+        if (ACTION_START_CALL == intent?.action) {
+            // 通话模式
+            isGuardMode = false
+            stopGuard()
+            showNotification()
+            startBluetoothSco()
+            acquireWakeLock()
+            running.set(true)
+            reconnectCount = 0
+            connectWebSocket()
+        } else {
+            // 守护模式
+            isGuardMode = true
+            showGuardNotification()
+            running.set(true)
+            startGuard()
+        }
+        return START_STICKY
     }
 
     override fun onDestroy() {
@@ -64,6 +81,7 @@ class VoiceCallService : Service() {
         disconnectWebSocket()
         stopMediaPlayer()
         stopBluetoothSco()
+        stopGuard()
         wakeLock?.release()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
@@ -403,5 +421,83 @@ class VoiceCallService : Service() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "nianan:call")
         wakeLock?.acquire(3600_000)
+    }
+
+    // ─── 守护模式（Gateway心跳检测+自动拉起）───
+
+    private fun showGuardNotification() {
+        val notif = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("念安守护中")
+            .setContentText("Hermes Gateway 存活监控")
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setOngoing(true)
+            .setPriority(Notification.PRIORITY_LOW)
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            @Suppress("DEPRECATION")
+            startForeground(NOTIFICATION_ID, notif)
+        }
+    }
+
+    private fun startGuard() {
+        guardThread = Thread {
+            android.util.Log.i("nianan-guard", "守护循环启动")
+            while (running.get() && isGuardMode) {
+                try {
+                    Thread.sleep(GUARD_INTERVAL_MS)
+                    if (!running.get() || !isGuardMode) break
+                    val alive = checkHealth()
+                    if (alive) {
+                        guardFailures = 0
+                    } else {
+                        guardFailures++
+                        android.util.Log.w("nianan-guard", "Gateway无响应 ($guardFailures/$MAX_GUARD_FAILURES)")
+                        if (guardFailures >= MAX_GUARD_FAILURES) {
+                            restartHermes()
+                            guardFailures = 0
+                        }
+                    }
+                } catch (e: InterruptedException) { break }
+                catch (e: Exception) {
+                    android.util.Log.e("nianan-guard", "异常: ${e.message}")
+                }
+            }
+        }.apply { start() }
+    }
+
+    private fun stopGuard() {
+        guardThread?.interrupt()
+        guardThread = null
+        isGuardMode = false
+    }
+
+    private fun checkHealth(): Boolean {
+        return try {
+            val conn = java.net.URL(HEALTH_URL).openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            conn.requestMethod = "GET"
+            val code = conn.responseCode
+            conn.disconnect()
+            code == 200
+        } catch (e: Exception) { false }
+    }
+
+    private fun restartHermes() {
+        android.util.Log.w("nianan-guard", "重启Hermes Gateway")
+        try {
+            Runtime.getRuntime().exec(
+                arrayOf("sh", "-c", "hermes gateway run"),
+                arrayOf(
+                    "HOME=/data/data/com.termux/files/home",
+                    "PATH=/data/data/com.termux/files/usr/bin:/system/bin"
+                ),
+                null
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("nianan-guard", "重启失败: ${e.message}")
+        }
     }
 }

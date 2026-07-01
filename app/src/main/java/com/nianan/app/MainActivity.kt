@@ -110,12 +110,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startHermesGuard() {
+        // 守护并入VoiceCallService — APP启动自动拉起
         try {
-            val intent = Intent(this, HermesGuardService::class.java)
+            val intent = Intent(this, VoiceCallService::class.java)
             startForegroundService(intent)
-            android.util.Log.i("nianan", "HermesGuardService 已启动")
         } catch (e: Exception) {
-            android.util.Log.e("nianan", "HermesGuard启动失败", e)
+            android.util.Log.e("nianan", "守护启动失败", e)
         }
     }
 

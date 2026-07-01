@@ -41,6 +41,5 @@
             </intent-filter>
         </activity>
         <service android:name=".VoiceCallService" android:exported="false" android:foregroundServiceType="microphone"/>
-        <service android:name=".HermesGuardService" android:exported="false" android:foregroundServiceType="microphone"/>
     </application>
 </manifest>
