@@ -28,9 +28,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 启动Hermes守护 — 独立Service，APP活着就一直守
-        startHermesGuard()
-
         wv = WebView(this).apply {
             settings.apply {
                 javaScriptEnabled = true
@@ -79,6 +76,9 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(wv)
         requestRuntimePermissions()
+
+        // 守护启动放最后 — 等Activity完全就绪后再拉Service
+        startHermesGuard()
     }
 
     inner class CallBridge {
