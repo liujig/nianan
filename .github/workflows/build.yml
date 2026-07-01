@@ -49,7 +49,7 @@ jobs:
           APK=$(find app/build -name "*.apk" -type f | head -1)
           echo "APK: $APK"
           ls -la "$APK"
-          cp "$APK" 260702niananduihua.apk
+          cp "$APK" 26070102niananduihua.apk
           
           # 创建tag
           TAG="build-${{ github.run_number }}"
@@ -57,9 +57,9 @@ jobs:
           git push origin "$TAG" 2>/dev/null || true
           
           # 用GitHub CLI创建release
-          gh release create "$TAG" 260702niananduihua.apk \
+          gh release create "$TAG" 26070102niananduihua.apk \
             --title "Build #${{ github.run_number }}" \
-            --notes "260702 HermesGuard守护版 $(date)" \
+            --notes "26070102 HermesGuard守护版 $(date)" \
             --repo liujig/nianan \
             2>/dev/null || true
         env:
