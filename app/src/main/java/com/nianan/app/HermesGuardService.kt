@@ -3,7 +3,6 @@ package com.nianan.app
 import android.app.*
 import android.content.ComponentCallbacks2
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.os.*
 import java.net.HttpURLConnection
 import java.net.URL
@@ -107,12 +106,7 @@ class HermesGuardService : Service() {
 
     private fun showNotification() {
         val notif = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            @Suppress("DEPRECATION")
-            startForeground(NOTIFICATION_ID, notif)
-        }
+        startForeground(NOTIFICATION_ID, notif)
     }
 
     // ─── 守护循环 ───
