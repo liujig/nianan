@@ -550,10 +550,12 @@ class VoiceCallService : Service(), SensorEventListener {
         accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
         gravitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
+        stepDetector = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
         sensorManager?.registerListener(this, lightSensor, SensorManager.SENSOR_DELAY_NORMAL)
         sensorManager?.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
         sensorManager?.registerListener(this, proximitySensor, SensorManager.SENSOR_DELAY_NORMAL)
         sensorManager?.registerListener(this, gravitySensor, SensorManager.SENSOR_DELAY_NORMAL)
+        sensorManager?.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_FASTEST)
         // GPS
         try {
             locationManager?.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 10000L, 50f) { loc ->
@@ -576,6 +578,7 @@ class VoiceCallService : Service(), SensorEventListener {
             Sensor.TYPE_GRAVITY -> {
                 lastGravityX = event.values[0]; lastGravityY = event.values[1]; lastGravityZ = event.values[2]
             }
+            Sensor.TYPE_STEP_DETECTOR -> lastStepDetected = System.currentTimeMillis()
         }
     }
 
