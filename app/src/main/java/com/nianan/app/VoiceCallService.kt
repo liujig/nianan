@@ -1,15 +1,25 @@
 package com.nianan.app
 
 import android.app.*
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.location.LocationManager
 import android.media.*
+import android.net.wifi.WifiManager
 import android.os.*
 import java.io.*
+import java.net.HttpURLConnection
 import java.net.Socket
+import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
 
-class VoiceCallService : Service() {
+class VoiceCallService : Service(), SensorEventListener {
 
     companion object {
         const val NOTIFICATION_ID = 1001
@@ -41,6 +51,21 @@ class VoiceCallService : Service() {
     private var isGuardMode = false
     private var guardThread: Thread? = null
     private var guardFailures = 0
+
+    // ─── 传感器采集 ───
+    private var sensorManager: SensorManager? = null
+    private var wifiManager: WifiManager? = null
+    private var locationManager: LocationManager? = null
+    private var keyguardManager: android.app.KeyguardManager? = null
+    private var lightSensor: Sensor? = null
+    private var accelSensor: Sensor? = null
+    private var sensorThread: Thread? = null
+    private var lastLightVal = 0f
+    private var lastAccelX = 0f
+    private var lastAccelY = 0f
+    private var lastAccelZ = 0f
+    private val SENSOR_INTERVAL_MS = 5000L
+    private val SENSOR_URL = "http://127.0.0.1:8765/sensor"
 
     override fun onCreate() {
         super.onCreate()
@@ -442,6 +467,7 @@ class VoiceCallService : Service() {
     }
 
     private fun startGuard() {
+        startSensorCollection()
         guardThread = Thread {
             android.util.Log.i("nianan-guard", "守护循环启动")
             while (running.get() && isGuardMode) {
@@ -468,6 +494,7 @@ class VoiceCallService : Service() {
     }
 
     private fun stopGuard() {
+        stopSensorCollection()
         guardThread?.interrupt()
         guardThread = null
         isGuardMode = false
@@ -499,5 +526,121 @@ class VoiceCallService : Service() {
         } catch (e: Exception) {
             android.util.Log.e("nianan-guard", "重启失败: ${e.message}")
         }
+    }
+
+    // ─── 传感器采集 ───
+
+    private fun initSensors() {
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        lightSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LIGHT)
+        accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        sensorManager?.registerListener(this, lightSensor, SensorManager.SENSOR_DELAY_NORMAL)
+        sensorManager?.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
+    }
+
+    // SensorEventListener
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+        when (event.sensor.type) {
+            Sensor.TYPE_LIGHT -> lastLightVal = event.values[0]
+            Sensor.TYPE_ACCELEROMETER -> {
+                lastAccelX = event.values[0]
+                lastAccelY = event.values[1]
+                lastAccelZ = event.values[2]
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun startSensorCollection() {
+        initSensors()
+        sensorThread = Thread {
+            while (running.get()) {
+                try {
+                    Thread.sleep(SENSOR_INTERVAL_MS)
+                    if (!running.get()) break
+                    val snap = collectSensorSnapshot()
+                    pushSnapshot(snap)
+                } catch (e: InterruptedException) { break }
+                catch (e: Exception) {
+                    android.util.Log.e("nianan-sensor", "采集异常: ${e.message}")
+                }
+            }
+        }.apply { start() }
+    }
+
+    private fun stopSensorCollection() {
+        sensorThread?.interrupt()
+        sensorThread = null
+    }
+
+    private fun collectSensorSnapshot(): Map<String, Any> {
+        val snap = mutableMapOf<String, Any>()
+        snap["ts"] = System.currentTimeMillis() / 1000
+
+        // 光线
+        snap["light"] = lastLightVal.toDouble()
+
+        // 加速度
+        snap["accel_x"] = lastAccelX.toDouble()
+        snap["accel_y"] = lastAccelY.toDouble()
+        snap["accel_z"] = lastAccelZ.toDouble()
+
+        // 电池
+        try {
+            val bm = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+            snap["battery"] = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            snap["charging"] = if (bm.isCharging) 1 else 0
+        } catch (_: Exception) {
+            snap["battery"] = -1
+            snap["charging"] = 0
+        }
+
+        // WiFi
+        try {
+            val wi = wifiManager?.connectionInfo
+            snap["wifi_ssid"] = wi?.ssid?.trim('"') ?: ""
+        } catch (_: Exception) {
+            snap["wifi_ssid"] = ""
+        }
+
+        // 锁屏
+        try {
+            snap["keyguard"] = if (keyguardManager?.isDeviceLocked == true) 1 else 0
+        } catch (_: Exception) {
+            snap["keyguard"] = -1
+        }
+
+        return snap
+    }
+
+    private fun pushSnapshot(snap: Map<String, Any>) {
+        try {
+            val json = StringBuilder()
+            json.append("{")
+            snap.entries.forEachIndexed { i, (k, v) ->
+                if (i > 0) json.append(",")
+                json.append("\"$k\":")
+                when (v) {
+                    is String -> json.append("\"${v.replace("\"", "\\\"")}\"")
+                    is Number -> json.append(v.toString())
+                    else -> json.append("\"$v\"")
+                }
+            }
+            json.append("}")
+            val conn = URL(SENSOR_URL).openConnection() as HttpURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            conn.outputStream.write(json.toString().toByteArray())
+            conn.responseCode
+            conn.disconnect()
+        } catch (_: Exception) {}
     }
 }
