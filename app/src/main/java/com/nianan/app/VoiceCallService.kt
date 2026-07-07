@@ -59,11 +59,22 @@ class VoiceCallService : Service(), SensorEventListener {
     private var keyguardManager: android.app.KeyguardManager? = null
     private var lightSensor: Sensor? = null
     private var accelSensor: Sensor? = null
+    private var proximitySensor: Sensor? = null
+    private var gravitySensor: Sensor? = null
+    private var stepDetector: Sensor? = null
     private var sensorThread: Thread? = null
     private var lastLightVal = 0f
     private var lastAccelX = 0f
     private var lastAccelY = 0f
     private var lastAccelZ = 0f
+    private var lastProximityVal = 0f
+    private var lastGravityX = 0f
+    private var lastGravityY = 0f
+    private var lastGravityZ = 0f
+    private var lastStepDetected = 0L
+    private var locationLastLat = 0.0
+    private var locationLastLon = 0.0
+    private var locationHasFix = false
     private val SENSOR_INTERVAL_MS = 5000L
     private val SENSOR_URL = "http://127.0.0.1:8765/sensor"
 
@@ -537,8 +548,22 @@ class VoiceCallService : Service(), SensorEventListener {
         keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
         lightSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_LIGHT)
         accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        gravitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
+        stepDetector = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
         sensorManager?.registerListener(this, lightSensor, SensorManager.SENSOR_DELAY_NORMAL)
         sensorManager?.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_NORMAL)
+        sensorManager?.registerListener(this, proximitySensor, SensorManager.SENSOR_DELAY_NORMAL)
+        sensorManager?.registerListener(this, gravitySensor, SensorManager.SENSOR_DELAY_NORMAL)
+        sensorManager?.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_FASTEST)
+        // GPS
+        try {
+            locationManager?.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 10000L, 50f) { loc ->
+                locationLastLat = loc.latitude
+                locationLastLon = loc.longitude
+                locationHasFix = true
+            }
+        } catch (_: Exception) {}
     }
 
     // SensorEventListener
@@ -547,10 +572,13 @@ class VoiceCallService : Service(), SensorEventListener {
         when (event.sensor.type) {
             Sensor.TYPE_LIGHT -> lastLightVal = event.values[0]
             Sensor.TYPE_ACCELEROMETER -> {
-                lastAccelX = event.values[0]
-                lastAccelY = event.values[1]
-                lastAccelZ = event.values[2]
+                lastAccelX = event.values[0]; lastAccelY = event.values[1]; lastAccelZ = event.values[2]
             }
+            Sensor.TYPE_PROXIMITY -> lastProximityVal = event.values[0]
+            Sensor.TYPE_GRAVITY -> {
+                lastGravityX = event.values[0]; lastGravityY = event.values[1]; lastGravityZ = event.values[2]
+            }
+            Sensor.TYPE_STEP_DETECTOR -> lastStepDetected = System.currentTimeMillis()
         }
     }
 
@@ -583,12 +611,25 @@ class VoiceCallService : Service(), SensorEventListener {
         snap["ts"] = System.currentTimeMillis() / 1000
 
         // 光线
-        snap["light"] = lastLightVal.toDouble()
-
+        snap["light"] = String.format("%.1f", lastLightVal)
         // 加速度
-        snap["accel_x"] = lastAccelX.toDouble()
-        snap["accel_y"] = lastAccelY.toDouble()
-        snap["accel_z"] = lastAccelZ.toDouble()
+        snap["accel_x"] = String.format("%.2f", lastAccelX)
+        snap["accel_y"] = String.format("%.2f", lastAccelY)
+        snap["accel_z"] = String.format("%.2f", lastAccelZ)
+        // 接近传感器 (5cm以内=贴近)
+        snap["proximity"] = String.format("%.1f", lastProximityVal)
+        // 重力
+        snap["gravity_x"] = String.format("%.2f", lastGravityX)
+        snap["gravity_y"] = String.format("%.2f", lastGravityY)
+        snap["gravity_z"] = String.format("%.2f", lastGravityZ)
+        // 步数（距上次检测到步数的秒数，0=刚走了一步）
+        val secSinceStep = if (lastStepDetected > 0) (System.currentTimeMillis() - lastStepDetected) / 1000 else 999
+        snap["step_ago"] = secSinceStep
+        // GPS
+        snap["gps_lat"] = if (locationHasFix) locationLastLat else 0.0
+        snap["gps_lon"] = if (locationHasFix) locationLastLon else 0.0
+        // 环境音量
+        snap["volume"] = getAmbientVolume()
 
         // 电池
         try {
@@ -596,26 +637,41 @@ class VoiceCallService : Service(), SensorEventListener {
             snap["battery"] = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
             snap["charging"] = if (bm.isCharging) 1 else 0
         } catch (_: Exception) {
-            snap["battery"] = -1
-            snap["charging"] = 0
+            snap["battery"] = -1; snap["charging"] = 0
         }
 
         // WiFi
         try {
             val wi = wifiManager?.connectionInfo
             snap["wifi_ssid"] = wi?.ssid?.trim('"') ?: ""
-        } catch (_: Exception) {
-            snap["wifi_ssid"] = ""
-        }
+        } catch (_: Exception) { snap["wifi_ssid"] = "" }
 
         // 锁屏
         try {
             snap["keyguard"] = if (keyguardManager?.isDeviceLocked == true) 1 else 0
-        } catch (_: Exception) {
-            snap["keyguard"] = -1
-        }
+        } catch (_: Exception) { snap["keyguard"] = -1 }
 
         return snap
+    }
+
+    private var ambientRecorder: AudioRecord? = null
+    private fun getAmbientVolume(): Int {
+        try {
+            if (ambientRecorder == null) {
+                val bufSize = AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                ambientRecorder = AudioRecord(MediaRecorder.AudioSource.MIC, 8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
+                ambientRecorder?.startRecording()
+            }
+            val buf = ShortArray(160) // 20ms @ 8kHz
+            val n = ambientRecorder?.read(buf, 0, 160) ?: 0
+            if (n > 0) {
+                var sum = 0L
+                for (i in 0 until n) { val v = buf[i].toInt(); sum += v * v }
+                val rms = Math.sqrt(sum.toDouble() / n)
+                return (20 * Math.log10(rms.coerceAtLeast(1.0))).toInt()
+            }
+        } catch (_: Exception) {}
+        return -1
     }
 
     private fun pushSnapshot(snap: Map<String, Any>) {
