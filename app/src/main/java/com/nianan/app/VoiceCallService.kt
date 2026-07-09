@@ -480,7 +480,7 @@ class VoiceCallService : Service(), SensorEventListener {
     private fun startGuard() {
         startSensorCollection()
         guardThread = Thread {
-            android.util.Log.i("nianan-guard", "守护循环启动")
+            android.util.Log.i("nianan-guard", "守护循环启动 (mesh v260709)")
             while (running.get() && isGuardMode) {
                 try {
                     Thread.sleep(GUARD_INTERVAL_MS)
@@ -496,12 +496,47 @@ class VoiceCallService : Service(), SensorEventListener {
                             guardFailures = 0
                         }
                     }
+                    // 网状保活：读取Termux内各节点心跳文件
+                    checkMeshStatus()
                 } catch (e: InterruptedException) { break }
                 catch (e: Exception) {
                     android.util.Log.e("nianan-guard", "异常: ${e.message}")
                 }
             }
         }.apply { start() }
+    }
+
+    private var meshNodes: MutableMap<String, Long> = mutableMapOf()
+    
+    private fun checkMeshStatus() {
+        try {
+            val meshDir = "/data/data/com.termux/files/home/nianan_brain/run/mesh"
+            val files = Runtime.getRuntime().exec(arrayOf("ls", meshDir)).inputStream.bufferedReader().readText()
+            val now = System.currentTimeMillis() / 1000
+            val alive = mutableListOf<String>()
+            val dead = mutableListOf<String>()
+            for (fname in files.trim().split("\n")) {
+                if (!fname.endsWith(".json")) continue
+                try {
+                    val content = Runtime.getRuntime().exec(arrayOf("cat", "$meshDir/$fname"))
+                        .inputStream.bufferedReader().readText()
+                    val ts = content.substringAfter("\"ts\":").substringBefore(",").trim().toLongOrNull() ?: 0
+                    if (now - ts < 60) alive.add(fname.removeSuffix(".json"))
+                    else dead.add(fname.removeSuffix(".json"))
+                } catch (_: Exception) { dead.add(fname.removeSuffix(".json")) }
+            }
+            if (dead.isNotEmpty()) {
+                android.util.Log.w("nianan-mesh", "节点超时: ${dead.joinToString()}")
+            }
+            // 全节点断联 > 3分钟 → Termux团灭 → 拉Gateway
+            if (alive.isEmpty() && guardFailures >= MAX_GUARD_FAILURES) {
+                android.util.Log.e("nianan-mesh", "团灭检测! 拉起Gateway")
+                restartHermes()
+                guardFailures = 0
+            }
+        } catch (e: Exception) {
+            // mesh_dir不存在 → Termux未初始化，跳过
+        }
     }
 
     private fun stopGuard() {
