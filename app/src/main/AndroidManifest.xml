@@ -35,12 +35,13 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
 
     <application android:label="nianan" android:usesCleartextTraffic="true" android:theme="@style/AppTheme">
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".SetupActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity android:name=".MainActivity" android:exported="false"/>
         <service android:name=".VoiceCallService" android:exported="false" android:foregroundServiceType="microphone"/>
     </application>
 </manifest>

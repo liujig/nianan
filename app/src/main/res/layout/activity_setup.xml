@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="32dp"
+    android:gravity="center">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="念安 · 选择框架"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="32dp"/>
+
+    <RadioGroup
+        android:id="@+id/radioGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp">
+
+        <RadioButton
+            android:id="@+id/radioHermes"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Hermes"
+            android:textSize="16sp"
+            android:padding="8dp"/>
+
+        <RadioButton
+            android:id="@+id/radioOpenclaw"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="OpenClaw"
+            android:textSize="16sp"
+            android:padding="8dp"/>
+
+        <RadioButton
+            android:id="@+id/radioCustom"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="自定义"
+            android:textSize="16sp"
+            android:padding="8dp"/>
+    </RadioGroup>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="本地端口号"
+        android:textSize="14sp"
+        android:layout_marginBottom="8dp"/>
+
+    <EditText
+        android:id="@+id/editPort"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="例如 9191"
+        android:inputType="number"
+        android:text="9191"
+        android:layout_marginBottom="32dp"/>
+
+    <Button
+        android:id="@+id/btnConfirm"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="确认进入"/>
+
+</LinearLayout>

@@ -28,6 +28,18 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 读取框架配置
+        val prefs = getSharedPreferences("nianan_config", MODE_PRIVATE)
+        val framework = prefs.getString("framework", null)
+        if (framework == null) {
+            // 未配置，跳转配置页
+            startActivity(Intent(this, SetupActivity::class.java))
+            finish()
+            return
+        }
+        val port = prefs.getString("port", "9191") ?: "9191"
+        val baseUrl = "http://127.0.0.1:$port"
+
         wv = WebView(this).apply {
             settings.apply {
                 javaScriptEnabled = true
@@ -71,12 +83,14 @@ class MainActivity : AppCompatActivity() {
             }
 
             addJavascriptInterface(CallBridge(), "nianan")
-            loadUrl("http://127.0.0.1:9191")
+            loadUrl(baseUrl)
         }
 
         setContentView(wv)
         requestRuntimePermissions()
-        startHermesGuard()
+        if (framework == "hermes") {
+            startHermesGuard()
+        }
     }
 
     inner class CallBridge {
